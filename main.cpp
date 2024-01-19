@@ -27,62 +27,76 @@ int main() {
         .build(appInfo);
 
     // Create descriptor set layout for storage buffer.
-    constexpr vk::DescriptorSetLayoutBinding storageBufferLayoutBinding {
-        0, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eCompute
-    };
-    const vk::DescriptorSetLayoutCreateInfo storageBufferLayoutCreateInfo {
-        {}, storageBufferLayoutBinding
-    };
-    const vk::raii::DescriptorSetLayout storageBufferLayout { vulkan.device, storageBufferLayoutCreateInfo };
+    const vk::raii::DescriptorSetLayout storageBufferLayout = [&] -> vk::raii::DescriptorSetLayout {
+        constexpr vk::DescriptorSetLayoutBinding layoutBinding {
+            0, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eCompute
+        };
+        const vk::DescriptorSetLayoutCreateInfo createInfo {
+            {}, layoutBinding
+        };
+        return { vulkan.device, createInfo };
+    }();
 
     // Create compute pipeline layout.
-    const vk::PipelineLayoutCreateInfo pipelineLayoutCreateInfo {
-        {}, *storageBufferLayout
-    };
-    const vk::raii::PipelineLayout pipelineLayout { vulkan.device, pipelineLayoutCreateInfo };
+    const vk::raii::PipelineLayout pipelineLayout = [&] -> vk::raii::PipelineLayout {
+        const vk::PipelineLayoutCreateInfo createInfo {
+            {}, *storageBufferLayout
+        };
+        return { vulkan.device, createInfo };
+    }();
 
     // Create compute pipeline.
-    const vk::raii::ShaderModule computeShaderModule
-        = vkutil::createShaderModule(vulkan.device, "shaders/comp.comp.spv");
-    const vk::PipelineShaderStageCreateInfo computeShaderStageCreateInfo {
-        {}, vk::ShaderStageFlagBits::eCompute, *computeShaderModule, "main"
-    };
-    const vk::ComputePipelineCreateInfo computePipelineCreateInfo {
-        {}, computeShaderStageCreateInfo, *pipelineLayout
-    };
-    const vk::raii::Pipeline computePipeline { vulkan.device, nullptr, computePipelineCreateInfo };
+    const vk::raii::Pipeline computePipeline = [&] -> vk::raii::Pipeline {
+        const vk::raii::ShaderModule shaderModule
+            = vkutil::createShaderModule(vulkan.device, "shaders/comp.comp.spv");
+        const vk::PipelineShaderStageCreateInfo stageCreateInfo {
+            {}, vk::ShaderStageFlagBits::eCompute, *shaderModule, "main"
+        };
+        const vk::ComputePipelineCreateInfo createInfo {
+            {}, stageCreateInfo, *pipelineLayout
+        };
+        return { vulkan.device, nullptr, createInfo };
+    }();
 
     // Create command pool.
-    const vk::CommandPoolCreateInfo commandPoolCreateInfo {
-        vk::CommandPoolCreateFlagBits::eResetCommandBuffer, vulkan.queueFamilyIndices.compute
-    };
-    const vk::raii::CommandPool commandPool { vulkan.device, commandPoolCreateInfo };
+    const vk::raii::CommandPool commandPool = [&] -> vk::raii::CommandPool {
+        const vk::CommandPoolCreateInfo createInfo {
+            vk::CommandPoolCreateFlagBits::eResetCommandBuffer, vulkan.queueFamilyIndices.compute
+        };
+        return { vulkan.device, createInfo };
+    }();
 
     // Create descriptor pool.
-    constexpr vk::DescriptorPoolSize descriptorPoolSize {
-        vk::DescriptorType::eStorageBuffer, 1
-    };
-    const vk::DescriptorPoolCreateInfo descriptorPoolCreateInfo {
-        {}, 1, descriptorPoolSize
-    };
-    const vk::raii::DescriptorPool descriptorPool { vulkan.device, descriptorPoolCreateInfo };
+    const vk::raii::DescriptorPool descriptorPool = [&] -> vk::raii::DescriptorPool {
+        constexpr vk::DescriptorPoolSize poolSize {
+            vk::DescriptorType::eStorageBuffer, 1
+        };
+        const vk::DescriptorPoolCreateInfo createInfo {
+            {}, 1, poolSize
+        };
+        return { vulkan.device, createInfo };
+    }();
 
     // Get descriptor set from descriptor pool.
-    const vk::DescriptorSetAllocateInfo descriptorSetAllocateInfo {
-        *descriptorPool, *storageBufferLayout
-    };
-    const vk::DescriptorSet descriptorSet = (*vulkan.device).allocateDescriptorSets(descriptorSetAllocateInfo)[0];
+    const vk::DescriptorSet descriptorSet = [&] {
+        const vk::DescriptorSetAllocateInfo allocInfo {
+            *descriptorPool, *storageBufferLayout
+        };
+        return (*vulkan.device).allocateDescriptorSets(allocInfo)[0];
+    }();
 
     // Create VMA allocator.
-    const vma::AllocatorCreateInfo allocatorCreateInfo {
-        {},
-        *vulkan.physicalDevice,
-        *vulkan.device,
-        {}, {}, {}, {}, {},
-        *vulkan.instance,
-        appInfo.apiVersion,
-    };
-    const vma::Allocator allocator = createAllocator(allocatorCreateInfo);
+    const vma::Allocator allocator = [&] {
+        const vma::AllocatorCreateInfo createInfo {
+            {},
+            *vulkan.physicalDevice,
+            *vulkan.device,
+            {}, {}, {}, {}, {},
+            *vulkan.instance,
+            appInfo.apiVersion,
+        };
+        return createAllocator(createInfo);
+    }();
 
     // Start new scope, because all buffers allocated by VMA must be destroyed before the allocator is destroyed.
     {
@@ -94,10 +108,12 @@ int main() {
         };
 
         // Create storage buffer.
-        constexpr vk::BufferCreateInfo bufferCreateInfo {
-            {}, sizeof(PaddedFloat) * NUM_COUNT, vk::BufferUsageFlagBits::eStorageBuffer
-        };
-        const vkutil::PersistentMappedBuffer buffer { allocator, bufferCreateInfo };
+        const vkutil::PersistentMappedBuffer buffer = [&] -> vkutil::PersistentMappedBuffer {
+            constexpr vk::BufferCreateInfo createInfo {
+                {}, sizeof(PaddedFloat) * NUM_COUNT, vk::BufferUsageFlagBits::eStorageBuffer
+            };
+            return { allocator, createInfo };
+        }();
         std::ranges::copy(as_bytes(std::span { nums }), buffer.data);
 
         // Print the original data before calculation. It would be [0, 1, ..., 128].
@@ -113,10 +129,12 @@ int main() {
         vulkan.device.updateDescriptorSets(writeDescriptorSet, {});
 
         // Get command buffer from command pool.
-        const vk::CommandBufferAllocateInfo allocateInfo {
-            *commandPool, vk::CommandBufferLevel::ePrimary, 1
-        };
-        const vk::CommandBuffer commandBuffer = (*vulkan.device).allocateCommandBuffers(allocateInfo)[0];
+        const vk::CommandBuffer commandBuffer = [&] {
+            const vk::CommandBufferAllocateInfo allocInfo {
+                *commandPool, vk::CommandBufferLevel::ePrimary, 1
+            };
+            return (*vulkan.device).allocateCommandBuffers(allocInfo)[0];
+        }();
 
         // Dispatch compute shader.
         constexpr vk::CommandBufferBeginInfo beginInfo {
