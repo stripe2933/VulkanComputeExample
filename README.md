@@ -4,6 +4,8 @@
 
 Easy Vulkan compute example with easy-to-use bootstrapper and utils (about 160 LoC).
 
+This branch is based on OOP style Vulkan usage. You can see [main branch](https://github.com/stripe2933/VulkanComputeExample) to get another version for same function.
+
 ```c++
 import std;
 import vkbase;
@@ -12,6 +14,88 @@ import vkutil;
 // Use 16-byte aligned struct, because Vulkan requires all storage buffer to be 16-byte aligned.
 struct alignas(16) PaddedFloat {
     float data;
+};
+
+// Multiply 2 to each PaddedFloats in the given storage buffer.
+// Use ::recordCommand(vk::CommandBuffer) to record compute dispatch command.
+class TwoMultiplier : public vkutil::CommandRecorder<TwoMultiplier> {
+    const vkbase::App &vulkan;
+    const vma::Allocator &allocator;
+    const vk::Buffer &buffer;
+    std::size_t numCount;
+
+    vk::raii::DescriptorSetLayout storageBufferLayout = getDescriptorSetLayout();
+    vk::raii::PipelineLayout pipelineLayout = createPipelineLayout(*storageBufferLayout);
+    vk::raii::Pipeline computePipeline = createPipeline(*pipelineLayout);
+    vk::raii::DescriptorPool descriptorPool = createDescriptorPool();
+    vk::DescriptorSet descriptorSet = getDescriptorSet(*descriptorPool);
+
+    [[nodiscard]] vk::raii::DescriptorSetLayout getDescriptorSetLayout() const {
+        constexpr vk::DescriptorSetLayoutBinding layoutBinding {
+            0, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eCompute
+        };
+        const vk::DescriptorSetLayoutCreateInfo createInfo {
+            {}, layoutBinding
+        };
+        return { vulkan.device, createInfo };
+    }
+
+    [[nodiscard]] vk::raii::PipelineLayout createPipelineLayout(vk::DescriptorSetLayout descriptorSetLayout) const {
+        const vk::PipelineLayoutCreateInfo createInfo {
+            {}, descriptorSetLayout
+        };
+        return { vulkan.device, createInfo };
+    }
+
+    [[nodiscard]] vk::raii::Pipeline createPipeline(vk::PipelineLayout pipelineLayout) const {
+        const vk::raii::ShaderModule shaderModule
+            = vkutil::createShaderModule(vulkan.device, "shaders/comp.comp.spv");
+        const vk::PipelineShaderStageCreateInfo stageCreateInfo {
+            {}, vk::ShaderStageFlagBits::eCompute, *shaderModule, "main"
+        };
+        const vk::ComputePipelineCreateInfo createInfo {
+            {}, stageCreateInfo, pipelineLayout
+        };
+        return { vulkan.device, nullptr, createInfo };
+    }
+
+    [[nodiscard]] vk::raii::DescriptorPool createDescriptorPool() const {
+        constexpr vk::DescriptorPoolSize poolSize {
+            vk::DescriptorType::eStorageBuffer, 1
+        };
+        const vk::DescriptorPoolCreateInfo createInfo {
+            {}, 1, poolSize
+        };
+        return { vulkan.device, createInfo };
+    }
+
+    [[nodiscard]] vk::DescriptorSet getDescriptorSet(vk::DescriptorPool descriptorPool) const {
+        const vk::DescriptorSetAllocateInfo allocInfo {
+            descriptorPool, *storageBufferLayout
+        };
+        return (*vulkan.device).allocateDescriptorSets(allocInfo)[0];
+    }
+
+public:
+    TwoMultiplier(const vkbase::App &vulkan, const vma::Allocator &allocator, const vk::Buffer &buffer, std::size_t numCount)
+        : vulkan { vulkan }, allocator { allocator }, buffer { buffer }, numCount { numCount } {
+    }
+
+    void recordCommand(vk::CommandBuffer commandBuffer) const {
+        // Update descriptor set.
+        const vk::DescriptorBufferInfo descriptorBufferInfo {
+            buffer, 0, sizeof(PaddedFloat) * numCount
+        };
+        const vk::WriteDescriptorSet writeDescriptorSet {
+            descriptorSet, 0, 0, 1, vk::DescriptorType::eStorageBuffer, {}, &descriptorBufferInfo
+        };
+        vulkan.device.updateDescriptorSets(writeDescriptorSet, {});
+
+        // Dispatch compute shader.
+        commandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, *computePipeline);
+        commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *pipelineLayout, 0, descriptorSet, {});
+        commandBuffer.dispatch(numCount / 32 /* local_size_x in compute shader */, 1, 1);
+    }
 };
 
 int main() {
@@ -29,63 +113,12 @@ int main() {
 #endif
         .build(appInfo);
 
-    // Create descriptor set layout for storage buffer.
-    const vk::raii::DescriptorSetLayout storageBufferLayout = [&] -> vk::raii::DescriptorSetLayout {
-        constexpr vk::DescriptorSetLayoutBinding layoutBinding {
-            0, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eCompute
-        };
-        const vk::DescriptorSetLayoutCreateInfo createInfo {
-            {}, layoutBinding
-        };
-        return { vulkan.device, createInfo };
-    }();
-
-    // Create compute pipeline layout.
-    const vk::raii::PipelineLayout pipelineLayout = [&] -> vk::raii::PipelineLayout {
-        const vk::PipelineLayoutCreateInfo createInfo {
-            {}, *storageBufferLayout
-        };
-        return { vulkan.device, createInfo };
-    }();
-
-    // Create compute pipeline.
-    const vk::raii::Pipeline computePipeline = [&] -> vk::raii::Pipeline {
-        const vk::raii::ShaderModule shaderModule
-            = vkutil::createShaderModule(vulkan.device, "shaders/comp.comp.spv");
-        const vk::PipelineShaderStageCreateInfo stageCreateInfo {
-            {}, vk::ShaderStageFlagBits::eCompute, *shaderModule, "main"
-        };
-        const vk::ComputePipelineCreateInfo createInfo {
-            {}, stageCreateInfo, *pipelineLayout
-        };
-        return { vulkan.device, nullptr, createInfo };
-    }();
-
     // Create command pool.
     const vk::raii::CommandPool commandPool = [&] -> vk::raii::CommandPool {
         const vk::CommandPoolCreateInfo createInfo {
             vk::CommandPoolCreateFlagBits::eResetCommandBuffer, vulkan.queueFamilyIndices.compute
         };
         return { vulkan.device, createInfo };
-    }();
-
-    // Create descriptor pool.
-    const vk::raii::DescriptorPool descriptorPool = [&] -> vk::raii::DescriptorPool {
-        constexpr vk::DescriptorPoolSize poolSize {
-            vk::DescriptorType::eStorageBuffer, 1
-        };
-        const vk::DescriptorPoolCreateInfo createInfo {
-            {}, 1, poolSize
-        };
-        return { vulkan.device, createInfo };
-    }();
-
-    // Get descriptor set from descriptor pool.
-    const vk::DescriptorSet descriptorSet = [&] {
-        const vk::DescriptorSetAllocateInfo allocInfo {
-            *descriptorPool, *storageBufferLayout
-        };
-        return (*vulkan.device).allocateDescriptorSets(allocInfo)[0];
     }();
 
     // Create VMA allocator.
@@ -119,42 +152,12 @@ int main() {
         }();
         std::ranges::copy(as_bytes(std::span { nums }), buffer.data);
 
-        // Print the original data before calculation. It would be [0, 1, ..., 128].
+        // Print the original data before calculation. It would be [0, 1, ..., 127].
         std::println("{}", std::span { reinterpret_cast<const PaddedFloat*>(buffer.data), NUM_COUNT } | std::views::transform(&PaddedFloat::data));
 
-        // Update descriptor set.
-        const vk::DescriptorBufferInfo descriptorBufferInfo {
-            buffer.buffer, 0, sizeof(PaddedFloat) * NUM_COUNT
-        };
-        const vk::WriteDescriptorSet writeDescriptorSet {
-            descriptorSet, 0, 0, 1, vk::DescriptorType::eStorageBuffer, {}, &descriptorBufferInfo
-        };
-        vulkan.device.updateDescriptorSets(writeDescriptorSet, {});
-
-        // Get command buffer from command pool.
-        const vk::CommandBuffer commandBuffer = [&] {
-            const vk::CommandBufferAllocateInfo allocInfo {
-                *commandPool, vk::CommandBufferLevel::ePrimary, 1
-            };
-            return (*vulkan.device).allocateCommandBuffers(allocInfo)[0];
-        }();
-
-        // Dispatch compute shader.
-        constexpr vk::CommandBufferBeginInfo beginInfo {
-            vk::CommandBufferUsageFlagBits::eOneTimeSubmit
-        };
-        commandBuffer.begin(beginInfo);
-        commandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, *computePipeline);
-        commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *pipelineLayout, 0, descriptorSet, {});
-        commandBuffer.dispatch(NUM_COUNT / 32 /* local_size_x in compute shader */, 1, 1);
-        commandBuffer.end();
-
-        // Submit command buffer to queue.
-        const vk::SubmitInfo submitInfo {
-            {}, {}, commandBuffer
-        };
-        vulkan.queues.compute.submit(submitInfo);
-        vulkan.queues.compute.waitIdle();
+        // Using vkutil::executeSingleCommand to get a command buffer from command pool, record command, submit and execute at once.
+        const TwoMultiplier twoMultiplier { vulkan, allocator, buffer.buffer, NUM_COUNT };
+        executeSingleCommand(*vulkan.device, *commandPool, vulkan.queues.compute, twoMultiplier);
 
         // Now let's check the result. It would be [0, 2, ..., 254].
         std::println("{}", std::span { reinterpret_cast<const PaddedFloat*>(buffer.data), NUM_COUNT } | std::views::transform(&PaddedFloat::data));
@@ -166,7 +169,6 @@ int main() {
     // Wait until the device is idle. Happy Vulkan!
     vulkan.device.waitIdle();
 }
-
 ```
 
 **Output:**
