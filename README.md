@@ -4,6 +4,8 @@
 
 Easy Vulkan compute example with easy-to-use bootstrapper and utils (about 160 LoC).
 
+If you want to see the OOP style for same function, it would be worth to see [OOP style branch](https://github.com/stripe2933/VulkanComputeExample/tree/oop-style).
+
 ```c++
 import std;
 import vkbase;
