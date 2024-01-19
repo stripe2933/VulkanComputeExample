@@ -116,7 +116,7 @@ int main() {
         }();
         std::ranges::copy(as_bytes(std::span { nums }), buffer.data);
 
-        // Print the original data before calculation. It would be [0, 1, ..., 128].
+        // Print the original data before calculation. It would be [0, 1, ..., 127].
         std::println("{}", std::span { reinterpret_cast<const PaddedFloat*>(buffer.data), NUM_COUNT } | std::views::transform(&PaddedFloat::data));
 
         // Update descriptor set.
